@@ -42,7 +42,34 @@
 /* Missing headers for ARMCC */
 #else
 #include <tuple>
+
+#if defined(__GNUC__)
+    #if defined(__clang__) || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 5)
+        #define PROMISE_HAS_TYPEINDEX
+    #endif
+#else
+    #define PROMISE_HAS_TYPEINDEX
+#endif
+
+#if defined(__GNUC__)
+    #if defined(__clang__) || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 8)
+        #define PROMISE_HAS_TUPLE_INDEX_SEQUENCE
+    #endif
+#else
+    #define PROMISE_HAS_TUPLE_INDEX_SEQUENCE
+#endif
+
+#if defined(__GNUC__)
+    #if defined(__clang__) || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 8)
+        #define PROMISE_HAS_VARIADIC_CAPTURE
+    #endif
+#else
+    #define PROMISE_HAS_VARIADIC_CAPTURE
+#endif
+
+#ifdef PROMISE_HAS_TYPEINDEX
 #include <typeindex>
+#endif
 #include <type_traits>
 #endif
 
@@ -205,11 +232,51 @@ inline type_index get_type_index(const std::type_info &info){
 
 }
 
-#else
+#else // __ARMCC_VERSION
+
+#ifndef PROMISE_HAS_TUPLE_INDEX_SEQUENCE
+namespace std {
+
+template <size_t... Ints>
+struct index_sequence
+{
+    typedef index_sequence type;
+    typedef size_t value_type;
+    static constexpr std::size_t size() noexcept { return sizeof...(Ints); }
+};
+
+template <class Sequence1, class Sequence2>
+struct _merge_and_renumber;
+
+template <size_t... I1, size_t... I2>
+struct _merge_and_renumber<index_sequence<I1...>, index_sequence<I2...>>
+    : index_sequence<I1..., (sizeof...(I1)+I2)...>
+{ };
+
+template <size_t N>
+struct make_index_sequence
+    : _merge_and_renumber<typename make_index_sequence<N / 2>::type,
+    typename make_index_sequence<N - N / 2>::type>
+{ };
+
+template<> struct make_index_sequence<0> : index_sequence<> { };
+template<> struct make_index_sequence<1> : index_sequence<0> { };
+} // namespace std
+#endif // PROMISE_HAS_TUPLE_INDEX_SEQUENCE
+
+#ifndef PROMISE_HAS_TYPEINDEX
+namespace std {
+typedef const std::type_info *type_index;
+inline type_index get_type_index(const std::type_info &info){
+    return type_index(&info);
+}
+} // namespace std
+#else // PROMISE_HAS_TYPEINDEX
 inline std::type_index get_type_index(const std::type_info &info){
     return std::type_index(info);
 }
-#endif
+#endif // PROMISE_HAS_TYPEINDEX
+#endif // __ARMCC_VERSION
 
 
 namespace promise {
@@ -1702,7 +1769,8 @@ struct ExCheck {
 
 template <typename FUNC>
 struct ExCheck<0, FUNC> {
-    static auto call(const FUNC &func, Defer &self, Promise *caller) {
+    static auto call(const FUNC &func, Defer &self, Promise *caller)
+        -> typename call_tuple_ret_t<typename func_traits<FUNC>::ret_type>::ret_type {
         pm_any arg = std::tuple<>();
         caller->any_.clear();
         return call_func(func, arg);
@@ -1712,7 +1780,8 @@ struct ExCheck<0, FUNC> {
 template <typename FUNC>
 struct ExCheck<1, FUNC> {
     typedef typename func_traits<FUNC>::arg_type arg_type;
-    static auto call(const FUNC &func, Defer &self, Promise *caller) {
+    static auto call(const FUNC &func, Defer &self, Promise *caller)
+        -> typename call_tuple_ret_t<typename func_traits<FUNC>::ret_type>::ret_type {
         std::exception_ptr eptr = any_cast<std::exception_ptr>(caller->any_);
         try {
             std::rethrow_exception(eptr);
@@ -1861,6 +1930,7 @@ inline Defer While(FUNC func) {
     });
 }
 
+#ifdef PROMISE_HAS_VARIADIC_CAPTURE
 /* Return a rejected promise directly */
 template <typename ...RET_ARG>
 inline Defer reject(const RET_ARG &... ret_arg){
@@ -1871,6 +1941,7 @@ template <typename ...RET_ARG>
 inline Defer resolve(const RET_ARG &... ret_arg){
     return newPromise([=](Defer &d){ d.resolve(ret_arg...); });
 }
+#endif // PROMISE_HAS_VARIADIC_CAPTURE
 
 }
 
