@@ -33,7 +33,7 @@ namespace poolqueue {
    //   A promise represents the eventual result of an asynchronous
    //   operation. The primary way of interacting with a promise is
    //   through its then method, which registers callbacks to receive
-   //   either a promiseâ€™s eventual value or the reason why the
+   //   either a promiseÕs eventual value or the reason why the
    //   promise cannot be fulfilled.
    //
    // A Promise instance references shared state. Copying an instance
@@ -66,8 +66,17 @@ namespace poolqueue {
       // Move constructor.
       Promise(Promise&&) noexcept;
 
+#if __cplusplus >= 201103L
       // Move assignment.
       Promise& operator=(Promise&&) = default;
+#else
+      // Move assignment.
+      Promise& operator=(Promise&& o) {
+          pimpl = o.pimpl;
+          o.pimpl.reset();
+          return *this;
+      }
+#endif
 
       // Construct a non-dependent Promise with callbacks.
       // @onFulfil Function/functor to be called if the Promise is fulfilled.
@@ -84,14 +93,14 @@ namespace poolqueue {
       // callback argument will be called.
       template<typename Fulfil, typename Reject = detail::NullReject,
                typename = typename std::enable_if<!std::is_same<typename std::decay<Fulfil>::type, Promise>::value>::type>
-      Promise(Fulfil&& onFulfil, Reject&& onReject = Reject())
-         : Promise(
+      Promise(Fulfil&& onFulfil, Reject&& onReject = Reject()) {
+         init(
             !std::is_same<typename std::decay<Fulfil>::type, detail::NullFulfil>::value ?
             detail::makeCallbackWrapper(std::forward<Fulfil>(onFulfil)) :
             static_cast<detail::CallbackWrapper *>(nullptr),
             !std::is_same<typename std::decay<Reject>::type, detail::NullReject>::value ?            
             detail::makeCallbackWrapper(std::forward<Reject>(onReject)) :
-            static_cast<detail::CallbackWrapper *>(nullptr)) {
+            static_cast<detail::CallbackWrapper *>(nullptr));
          typedef typename detail::CallableTraits<Fulfil>::ArgumentType FulfilArgument;
          static_assert(!std::is_same<typename std::decay<FulfilArgument>::type, Promise>::value,
                        "onFulfil callback cannot take a Promise argument.");
@@ -431,8 +440,8 @@ namespace poolqueue {
       struct Pimpl;
       std::shared_ptr<Pimpl> pimpl;
 
-      Promise(detail::CallbackWrapper *, detail::CallbackWrapper *);
-      
+      void init(detail::CallbackWrapper *, detail::CallbackWrapper *);
+
       void settle(Value&& result) const;
       void attach(const Promise& next) const;
    };

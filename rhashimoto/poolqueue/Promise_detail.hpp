@@ -19,6 +19,7 @@ limitations under the License.
 #include <typeinfo>
 #include <utility>
 #include <vector>
+#include "type_traits.h"
 
 namespace poolqueue {
 
@@ -35,6 +36,9 @@ namespace poolqueue {
             message_ = std::string("failed cast from ") + from_.name() + " to " + to_.name();
          }
 
+         virtual ~bad_cast() NOEXCEPT {
+         }
+
          const std::type_info& from() const {
             return from_;
          }
@@ -42,8 +46,8 @@ namespace poolqueue {
          const std::type_info& to() const {
             return to_;
          }
-            
-         virtual const char *what() const noexcept {
+
+         virtual const char *what() const NOEXCEPT {
             return message_.c_str();
          }
       };

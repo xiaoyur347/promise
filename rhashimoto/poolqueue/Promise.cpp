@@ -38,7 +38,7 @@ namespace {
    // aborts.
    Promise::ExceptionHandler undeliveredExceptionHandler = [](const std::exception_ptr& e) {
       try {
-         if (e)
+         if (e != 0)
             std::rethrow_exception(e);
       }
       catch (const std::exception& e) {
@@ -71,7 +71,7 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
 
    Value value_;
    std::atomic<bool> closed_;
-   std::atomic<std::thread::id> settled_;
+   std::atomic<size_t> settled_;
    std::atomic<bool> undeliveredException_;
    
    std::unique_ptr<detail::CallbackWrapper> onFulfil_;
@@ -81,7 +81,8 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
       : upstream_(nullptr)
       , value_(Unset()) {
       closed_.store(false, std::memory_order_relaxed);
-      settled_.store(std::thread::id(), std::memory_order_relaxed);
+      std::hash<std::thread::id> hasher;
+      settled_.store(hasher(std::thread::id()), std::memory_order_relaxed);
       undeliveredException_.store(false, std::memory_order_relaxed);
    }
 
@@ -101,7 +102,8 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
    }
    
    bool settled() const {
-      return settled_.load(std::memory_order_relaxed) != std::thread::id();
+      std::hash<std::thread::id> hasher;
+      return settled_.load(std::memory_order_relaxed) != hasher(std::thread::id());
    }
 
    bool closed() const {
@@ -113,8 +115,9 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
       next->upstream_ = this;
 
       bool closed = false;
-      std::thread::id settled = settled_;
-      if (settled == std::thread::id()) {
+      size_t settled = settled_;
+      std::hash<std::thread::id> hasher;
+      if (settled == hasher(std::thread::id())) {
          // The Promise is probably not settled (it could have settled
          // immediately after the check). We need the lock to protect
          // against concurrent callers to this function and settle().
@@ -185,9 +188,9 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
          }
       }
 
-      if (settled != std::thread::id()) {
+      if (settled != hasher(std::thread::id())) {
          std::unique_lock<decltype(mutex_)> lock(mutex_, std::defer_lock);
-         if (closed && settled != std::this_thread::get_id()) {
+         if (closed && settled != hasher(std::this_thread::get_id())) {
             // This is the problem case where this call has added an
             // onResolve with an rvalue reference argument to a
             // settled Promise. We have to ensure that we wait until
@@ -269,12 +272,19 @@ struct poolqueue::Promise::Pimpl : std::enable_shared_from_this<Pimpl> {
 
          // Local update is complete. This store has release semantics
          // so threads that acquire settled_ can access updates to value_.
-         settled_ = std::this_thread::get_id();
+         std::hash<std::thread::id> hasher;
+         settled_ = hasher(std::this_thread::get_id());
 
          if (!downstream_.empty()) {
+#ifdef PROMISE_HAS_RANGE_BASED_FOR
             // Propagate settlement to dependent Promises.
             for (const auto& child : downstream_)
                child->settle(std::move(value_), false);
+#else // PROMISE_HAS_RANGE_BASED_FOR
+            for (auto child = downstream_.cbegin();
+                child != downstream_.cend(); ++child)
+                (*child)->settle(std::move(value_), false);
+#endif // PROMISE_HAS_RANGE_BASED_FOR
          }
          else if (value_.type() == typeid(std::exception_ptr)) {
             // The value contains an undelivered exception. If it
@@ -303,8 +313,8 @@ poolqueue::Promise::Promise()
    : pimpl(std::make_shared<Pimpl>()) {
    // STL containers will copy instead of move if they can't guarantee
    // strong exception safety. These checks are sufficient for that.
-   static_assert(std::is_nothrow_move_constructible<Promise>::value, "noexcept move");
-   static_assert(std::is_nothrow_move_assignable<Promise>::value, "noexcept assign");
+   //static_assert(std::is_nothrow_move_constructible<Promise>::value, "noexcept move");
+   //static_assert(std::is_nothrow_move_assignable<Promise>::value, "noexcept assign");
 }
 
 poolqueue::Promise::Promise(Promise&& other) noexcept
@@ -312,8 +322,8 @@ poolqueue::Promise::Promise(Promise&& other) noexcept
    pimpl.swap(other.pimpl);
 }
 
-poolqueue::Promise::Promise(detail::CallbackWrapper *onFulfil, detail::CallbackWrapper *onReject)
-   : pimpl(std::make_shared<Pimpl>()) {
+void poolqueue::Promise::init(detail::CallbackWrapper *onFulfil, detail::CallbackWrapper *onReject) {
+   pimpl = std::make_shared<Pimpl>();
    pimpl->onFulfil_.reset(onFulfil);
    pimpl->onReject_.reset(onReject);
 }
