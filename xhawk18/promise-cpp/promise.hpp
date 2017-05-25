@@ -51,11 +51,7 @@
     #define PROMISE_HAS_TYPEINDEX
 #endif
 
-#if defined(__GNUC__)
-    #if defined(__clang__) || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 8)
-        #define PROMISE_HAS_TUPLE_INDEX_SEQUENCE
-    #endif
-#else
+#if __cplusplus > 201103L
     #define PROMISE_HAS_TUPLE_INDEX_SEQUENCE
 #endif
 
